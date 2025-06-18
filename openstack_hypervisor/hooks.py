@@ -35,6 +35,10 @@ from snaphelpers._conf import UnknownConfigKey
 
 from openstack_hypervisor.log import setup_logging
 
+ISOLATED_CPUS_PATH = "/sys/devices/system/cpu/isolated"
+PRESENT_CPUS_PATH = "/sys/devices/system/cpu/present"
+CPU_SHARED_PERCENTAGE = 50  # Percentage of CPUs to be used for shared set
+
 UNSET = ""
 
 # Any configuration read from snap will be a string and
@@ -1518,6 +1522,89 @@ def _add_compute_flavor(snap: Snap, flavor: str) -> None:
     snap.config.set({"compute.flavors": updated_flavors})
 
 
+def _get_isolated_cpus() -> str:
+    """Get the list of isolated CPUs from ISOLATED_CPUS_PATH.
+
+    If no isolated CPUs are found, falls back to using all present CPUs.
+
+    Returns:
+        str: Comma-separated list of CPU ranges that are isolated or present
+    """
+    try:
+        with open(ISOLATED_CPUS_PATH, "r") as f:
+            isolated = f.read().strip()
+            if isolated:
+                logging.info(f"Found isolated CPUs: {isolated}")
+                return isolated
+
+        logging.info("No isolated CPUs found, falling back to present CPUs")
+        with open(PRESENT_CPUS_PATH, "r") as f:
+            present = f.read().strip()
+            if present:
+                logging.info(f"Using present CPUs: {present}")
+                return present
+
+        logging.error("Could not find any CPUs (neither isolated nor present)")
+        return ""
+    except Exception as e:
+        logging.error(f"Failed to get CPU information: {e}")
+        return ""
+
+
+def _calculate_cpu_pinning(cpu_list: str) -> tuple[str, str]:
+    """Calculate CPU pinning configuration from isolated CPU list.
+
+    Args:
+        cpu_list: Comma-separated list of CPU ranges
+
+    Returns:
+        tuple: (cpu_shared_set, cpu_dedicated_set) where each is a comma-separated
+              list of CPU ranges. cpu_shared_set gets CPU_SHARED_PERCENTAGE of CPUs.
+    """
+    if not cpu_list:
+        return "", ""
+
+    cpus = set()
+    for part in cpu_list.split(","):
+        if "-" in part:
+            start, end = map(int, part.split("-"))
+            cpus.update(range(start, end + 1))
+        else:
+            cpus.add(int(part))
+
+    cpus = sorted(list(cpus))
+
+    split_point = int(len(cpus) * CPU_SHARED_PERCENTAGE / 100)
+    shared_cpus = cpus[:split_point]
+    dedicated_cpus = cpus[split_point:]
+
+    def _to_ranges(cpu_list):
+        if not cpu_list:
+            return ""
+
+        ranges = []
+        start = cpu_list[0]
+        prev = start
+
+        for cpu in cpu_list[1:]:
+            if cpu != prev + 1:
+                if start == prev:
+                    ranges.append(str(start))
+                else:
+                    ranges.append(f"{start}-{prev}")
+                start = cpu
+            prev = cpu
+
+        if start == prev:
+            ranges.append(str(start))
+        else:
+            ranges.append(f"{start}-{prev}")
+
+        return ",".join(ranges)
+
+    return _to_ranges(shared_cpus), _to_ranges(dedicated_cpus)
+
+
 def configure(snap: Snap) -> None:
     """Runs the `configure` hook for the snap.
 
@@ -1537,6 +1624,9 @@ def configure(snap: Snap) -> None:
     _setup_secrets(snap)
     _detect_compute_flavors(snap)
 
+    isolated_cpus = _get_isolated_cpus()
+    cpu_shared_set, cpu_dedicated_set = _calculate_cpu_pinning(isolated_cpus)
+
     context = snap.config.get_options(
         "compute",
         "network",
@@ -1552,7 +1642,9 @@ def configure(snap: Snap) -> None:
         "sev",
     ).as_dict()
 
-    # Add some general snap path information
+    context["compute"]["cpu_shared_set"] = cpu_shared_set
+    context["compute"]["cpu_dedicated_set"] = cpu_dedicated_set
+
     context.update(
         {
             "snap_common": str(snap.paths.common),
