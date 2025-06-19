@@ -37,7 +37,7 @@ from openstack_hypervisor.log import setup_logging
 
 ISOLATED_CPUS_PATH = "/sys/devices/system/cpu/isolated"
 PRESENT_CPUS_PATH = "/sys/devices/system/cpu/present"
-CPU_SHARED_PERCENTAGE = 50  # Percentage of CPUs to be used for shared set
+CPU_DEDICATED_PERCENTAGE = 50  # Percentage of CPUs to be used for shared set
 
 UNSET = ""
 
@@ -1558,8 +1558,8 @@ def _calculate_cpu_pinning(cpu_list: str) -> tuple[str, str]:
         cpu_list: Comma-separated list of CPU ranges
 
     Returns:
-        tuple: (cpu_shared_set, cpu_dedicated_set) where each is a comma-separated
-              list of CPU ranges. cpu_shared_set gets CPU_SHARED_PERCENTAGE of CPUs.
+        tuple: (cpu_shared_set, vcpu_pin_set) where each is a comma-separated
+              list of CPU ranges. vcpu_pin_set gets CPU_DEDICATED_PERCENTAGE of CPUs.
     """
     if not cpu_list:
         return "", ""
@@ -1574,9 +1574,9 @@ def _calculate_cpu_pinning(cpu_list: str) -> tuple[str, str]:
 
     cpus = sorted(list(cpus))
 
-    split_point = int(len(cpus) * CPU_SHARED_PERCENTAGE / 100)
-    shared_cpus = cpus[:split_point]
-    dedicated_cpus = cpus[split_point:]
+    split_point = int(len(cpus) * CPU_DEDICATED_PERCENTAGE / 100)
+    dedicated_cpus = cpus[:split_point]
+    shared_cpus = cpus[split_point:]
 
     def _to_ranges(cpu_list):
         if not cpu_list:
@@ -1625,7 +1625,7 @@ def configure(snap: Snap) -> None:
     _detect_compute_flavors(snap)
 
     isolated_cpus = _get_isolated_cpus()
-    cpu_shared_set, cpu_dedicated_set = _calculate_cpu_pinning(isolated_cpus)
+    _, vcpu_pin_set = _calculate_cpu_pinning(isolated_cpus)
 
     context = snap.config.get_options(
         "compute",
@@ -1642,8 +1642,7 @@ def configure(snap: Snap) -> None:
         "sev",
     ).as_dict()
 
-    context["compute"]["cpu_shared_set"] = cpu_shared_set
-    context["compute"]["cpu_dedicated_set"] = cpu_dedicated_set
+    context["compute"]["vcpu_pin_set"] = vcpu_pin_set
 
     context.update(
         {
