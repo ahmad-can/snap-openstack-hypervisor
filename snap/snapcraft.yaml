@@ -35,6 +35,11 @@ platforms:
   arm64:
   s390x:
 
+package-repositories:
+  - type: apt
+    cloud: epoxy
+    priority: always
+
 system-usernames:
   snap_daemon: shared
 
@@ -71,6 +76,7 @@ apps:
     plugs:
       - network
       - network-observe
+      - network-setup-control
       - hardware-observe
 
   # Libvirt
@@ -292,6 +298,16 @@ apps:
       - network-bind
       - firewall-control
       - microstack-support
+      
+  file-transfer:
+    command: 'bin/file-transfer-service'
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - network-bind
+      - network-control
+      - microstack-support
 
   libvirt-exporter:
     daemon: simple
@@ -359,6 +375,7 @@ parts:
     plugin: autotools
     stage-packages:
       - seabios
+      - qemu-system-data
       - ipxe-qemu
       # UEFI Support, required on arm64
       - on arm64:
@@ -463,6 +480,7 @@ parts:
       - gcc
       - meson
       - ninja-build
+      - execstack
     autotools-configure-parameters:
       - --enable-system
       - --target-list=x86_64-softmmu,aarch64-softmmu
@@ -482,6 +500,11 @@ parts:
 
       # Install keymaps as the qemu build process does not!
       install -Dp -m0644 -t $CRAFT_PART_INSTALL/usr/share/qemu/keymaps $(ls -1 $CRAFT_PART_SRC/pc-bios/keymaps/* | fgrep -v /meson.build)
+    override-prime: |
+      craftctl default
+      for f in $(execstack -q $CRAFT_PRIME/usr/share/qemu/* 2>/dev/null| grep -e "^X" | cut -d " " -f2); do
+          execstack --clear-execstack $f
+      done
 
   libvirt:
     source: https://git.launchpad.net/ubuntu/+source/libvirt
@@ -657,6 +680,8 @@ parts:
 
   openstack:
     plugin: nil
+    build-packages:
+      - patch
     stage-packages:
       - ceilometer-agent-compute
       - python3-nova
@@ -697,6 +722,11 @@ parts:
       rm -rf $CRAFT_PART_INSTALL/usr/lib/python3/dist-packages/netaddr/eui/oui.txt
       # drop some docutils binaries to avoid libvirt part build confusion
       rm -rf $CRAFT_PART_INSTALL/usr/bin/rst2*
+    override-prime: |
+      craftctl default
+      pushd "$CRAFT_PRIME/usr/lib/python3/dist-packages"
+      patch -p1 < "$CRAFT_PROJECT_DIR/snap/patches/nova/0001-remotefs-http-driver.patch"
+      popd
 
   openstack-hypervisor:
     plugin: python
@@ -797,12 +827,14 @@ hooks:
     plugs:
       - network
       - network-control
+      - network-setup-control
       - hardware-observe
       - kernel-module-control
       - firewall-control
       - microstack-support
       - kvm
       - epa-info
+      - etc-driverctl
   connect-slot-hypervisor-config:
     plugs:
       - network
@@ -814,3 +846,8 @@ plugs:
     interface: content
     content: epa-info
     target: $SNAP_DATA
+  # Required in order to persistently bind drivers such as vfio-pci.
+  etc-driverctl:
+    interface: system-files
+    write:
+    - /etc/driverctl.d
