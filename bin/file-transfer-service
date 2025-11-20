@@ -25,6 +25,20 @@ ensure_dir_mode "${SNAP_COMMON}/var/webdav-lock" 757
 ensure_dir_mode "${SNAP_COMMON}/log/apache2" 757
 ensure_dir_mode "${SNAP_COMMON}/run/apache2" 757
 
+DAV_LOCK_DB="${SNAP_COMMON}/var/webdav-lock/DavLock"
+touch "${DAV_LOCK_DB}"
+chmod 666 "${DAV_LOCK_DB}"
+
+# Ensure any pre-existing directories under the WebDAV root remain accessible
+normalize_webdav_tree_perms() {
+    local root="${SNAP_COMMON}/var/webdav"
+    if [ -d "${root}" ]; then
+        find "${root}" -type d ! -perm 757 -exec chmod 757 {} +
+    fi
+}
+
+normalize_webdav_tree_perms
+
 touch "${SNAP_COMMON}/log/apache2/error.log" \
       "${SNAP_COMMON}/log/apache2/access.log" \
       "${SNAP_COMMON}/log/apache2/ssl_client.log"

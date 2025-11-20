@@ -1744,6 +1744,10 @@ def _configure_libvirt_tls(snap: Snap) -> None:
     shutil.copyfile(nova_key, apache_key)
     shutil.copyfile(nova_ca, apache_ca)
 
+    apache_cert.chmod(0o644)
+    apache_key.chmod(0o644)
+    apache_ca.chmod(0o644)
+
     _configure_webdav_apache(snap)
 
 
@@ -1792,6 +1796,7 @@ def _configure_webdav_apache(snap: Snap) -> None:
     dav_lock_dir_fs = LAYOUT_BASE / Path("var/webdav-lock")
     log_dir_fs = LAYOUT_BASE / Path("log/apache2")
     run_dir_fs = LAYOUT_BASE / Path("run/apache2")
+    mime_types_path_fs = LAYOUT_BASE / Path("etc/apache2/mime.types")
 
     module = lambda name: modules_dir / f"mod_{name}.so"
     dav_lock_db = dav_lock_dir_fs / "DavLock"
@@ -1826,7 +1831,7 @@ def _configure_webdav_apache(snap: Snap) -> None:
         MaxKeepAliveRequests 0
         KeepAliveTimeout 60
         LimitRequestBody 0
-        TypesConfig "{mime_types_path}"
+        TypesConfig "{mime_types_path_fs}"
 
         ErrorLog "{error_log}"
         CustomLog "{access_log}" combined
@@ -1849,6 +1854,8 @@ def _configure_webdav_apache(snap: Snap) -> None:
             DocumentRoot "{webdav_root_fs}"
             Alias / "{webdav_root_fs}/"
             <Directory "{webdav_root_fs}">
+                DirectorySlash Off
+                DavDepthInfinity On
                 DAV On
                 Options Indexes FollowSymLinks
                 AllowOverride None
